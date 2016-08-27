@@ -69,7 +69,7 @@ object Option {
     } yield f(x, y)
 
     // The above compiles to the following:
-//     a.flatMap(x => b.map(y => f(x,y)))
+    // a.flatMap(x => b.map(y => f(x,y)))
   }
 
   def sequence[A](a: List[Option[A]]): Option[List[A]] = sys.error("todo")

@@ -115,10 +115,10 @@ object RNG {
   }
 
   def nonNegativeLessThan(n: Int): Rand[Int] = {
-//    val greatestValidInt = ((Int.MaxValue / n) * n) - 1
+    //    val greatestValidInt = ((Int.MaxValue / n) * n) - 1
     flatMap(nonNegativeInt)(x => {
       val mod = x % n
-      if ((x + (n-1) - mod) < 0) {
+      if ((x + (n - 1) - mod) < 0) {
         nonNegativeLessThan(n)
       } else {
         unit(mod)
@@ -126,24 +126,61 @@ object RNG {
     })
   }
 
-  def mapWithFlatMap[A, B](s: Rand[A])(f: A => B): Rand[B] = {
+  def mapUsingFlatMap[A, B](s: Rand[A])(f: A => B): Rand[B] = {
     flatMap(s)(a => unit(f(a)))
   }
 
-  def map2WithFlatMap[A, B, C](ra: Rand[A], rb: Rand[B])(f: (A, B) => C): Rand[C] = {
-    flatMap(ra)(a => map(rb)(b => f(a, b)))
+  def map2UsingFlatMap[A, B, C](ra: Rand[A], rb: Rand[B])(f: (A, B) => C): Rand[C] = {
+    flatMap(ra)(a => mapUsingFlatMap(rb)(b => f(a, b)))
   }
 }
 
+import State._
+
 case class State[S, +A](run: S => (A, S)) {
-  def map[B](f: A => B): State[S, B] =
-    sys.error("todo")
+  def unit[A](a: A): State[S, A] =
+    State(s => (a, s))
 
-  def map2[B, C](sb: State[S, B])(f: (A, B) => C): State[S, C] =
-    sys.error("todo")
+  def map[B](f: A => B): State[S, B] = State(state => {
+    val (value, newState) = this.run(state)
+    (f(value), newState)
+  })
 
-  def flatMap[B](f: A => State[S, B]): State[S, B] =
-    sys.error("todo")
+  def mapUsingFlatMap[B](f: A => B): State[S, B] =
+    flatMap(a => unit(f(a)))
+
+  def map2[B, C](sb: State[S, B])(f: (A, B) => C): State[S, C] = State(state => {
+    val (aValue, aState) = this.run(state)
+    val (bValue, bState) = sb.run(aState)
+    (f(aValue, bValue), bState)
+  })
+
+  def map2UsingFlatMap[B, C](sb: State[S, B])(f: (A, B) => C): State[S, C] =
+    flatMap(a => sb.mapUsingFlatMap(b => f(a, b)))
+
+  def flatMap[B](f: A => State[S, B]): State[S, B] = State(state => {
+    val (aValue, aState) = this.run(state)
+    f(aValue).run(aState)
+  })
+}
+
+object State {
+  def unit[S, A](a: A): State[S, A] =
+    State(s => (a, s))
+
+  def sequenceWithMap2[S, A](fs: List[State[S, A]]): State[S, List[A]] = {
+    fs.foldRight[State[S, List[A]]](unit(Nil))((state, acc) =>
+      state.map2UsingFlatMap[List[A], List[A]](acc)(_ :: _))
+  }
+
+  def modify[S](f: S => S): State[S, Unit] = for {
+    s <- get // Gets the current state and assigns it to `s`.
+    _ <- set(f(s)) // Sets the new state to `f` applied to `s`.
+  } yield ()
+
+  def get[S]: State[S, S] = State(s => (s, s))
+
+  def set[S](s: S): State[S, Unit] = State(_ => ((), s))
 }
 
 sealed trait Input
@@ -152,21 +189,45 @@ case object Coin extends Input
 
 case object Turn extends Input
 
-case class Machine(locked: Boolean, candies: Int, coins: Int)
+case class Machine(locked: Boolean, candies: Int, coins: Int) {
+  def printProcess(i: Input): Machine = {
+    val result = CandyMachine.process(i)(this)
+    println(result)
+    result
+  }
+}
 
-object State {
+object CandyMachine {
   type Rand[A] = State[RNG, A]
 
-  def simulateMachine(inputs: List[Input]): State[Machine, (Int, Int)] = ???
+  def process = (i: Input) => (m: Machine) => {
+    (i, m) match {
+      case (_, Machine(_, candies, _)) if candies <= 0 => m
+      case (Coin, Machine(false, _, _)) => m
+      case (Turn, Machine(true, _, _)) => m
+      case (Coin, Machine(true, _, coins)) =>
+        Machine(false, m.candies, coins + 1)
+      case (Turn, Machine(false, candies, _)) =>
+        Machine(true, candies - 1, m.coins)
+    }
+  }
+
+  def simulateMachine(inputs: List[Input]): State[Machine, (Int, Int)] =
+    sequenceWithMap2(inputs.map(i => modify[Machine](process(i))))
+      .flatMap(m => get.map(s => (s.coins, s.candies)))
 }
 
 object test extends App {
   private val rng = RNG.Simple(100002)
+  private val machine = Machine(true, 2, 1)
   //  println(RNG.doubleWithMap(rng)._1)
   //  println(RNG.double(rng)._1)
   //  println(RNG.intsSequence(5)(rng)._1.mkString(", "))
   //  println(RNG.map2(RNG.int, RNG.nonNegativeInt)((i, d) => s"$i: $d")(rng)._1)
   //  println(RNG.sequence[Int](List(RNG.int, RNG.int))(rng)._1)
   //  println(RNG.sequenceWithMap2[Int](List(RNG.int, RNG.int))(rng)._1)
-  println(RNG.nonNegativeLessThan(10)(rng))
+  //println(RNG.nonNegativeLessThan(10)(rng))
+  println(machine)
+  machine.printProcess(Coin).printProcess(Turn).printProcess(Coin).printProcess(Turn)
+  println(CandyMachine.simulateMachine(List(Coin,Turn,Coin,Turn)).run(machine))
 }

@@ -233,6 +233,9 @@ object Candy {
         Machine(true, candy - 1, coin)
     }
 
+  def simulateMachineSimple(inputs: List[Input]): State[Machine, (Int, Int)] =
+    sequence(inputs.map(i => modify[Machine](update(i))))
+      .flatMap(m => get.map(s => (s.coins, s.candies)))
   def simulateMachine(inputs: List[Input]): State[Machine, (Int, Int)] = for {
     _ <- sequence(inputs map (modify[Machine] _ compose update))
     s <- get
